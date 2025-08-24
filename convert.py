@@ -6,7 +6,7 @@ import numpy as np
 import pickle
 import periodictable
 from materialcreator import MaterialCreator
-
+from solidcreator import SolidCreator
 
 def pickleit(obj, path):
     outfile = open(path, 'wb')
@@ -20,17 +20,17 @@ def unpickleit(path):
     return output
 
 class SingleBin:
-    def __init__(self, bin_name, reg, world, material_creator):
+    def __init__(self, bin_name, reg, world, material_creator, solid_creator):
         self.bin_name = bin_name
         self.reg = reg
         self.world = world
         self.material_creator = material_creator
-    
+        self.solid_creator = solid_creator
+
     def set_volume(self, volume):
         self.volume = volume
     
     def set_materialZ(self, materialZ):
-        # "ZAF": "Z1A1.00794F0.043;Z6A12.0107F0.793;Z7A14.0068F0.007;Z8A15.9994F0.121;Z14A28.0854F0.036;",
         self.materialZ = materialZ
         self.material = _g4.MaterialPredefined("G4_Fe")
     
@@ -38,48 +38,7 @@ class SingleBin:
         self.material = None
         if len(ZAFstring) == 0:
             return
-        self.material = self.material_creator.create_material(ZAFstring, material[4])
-        # molarmassdensity = material[4]
-        # elements_string = ZAFstring.split(";")
-        # elements = []
-        # for each_element_string in elements_string:
-        #     if len(each_element_string) == 0:
-        #         continue
-        #     each_element_string = each_element_string.replace("Z", "")
-        #     each_z = float(each_element_string.split("A")[0])
-        #     each_a = float(each_element_string.split("A")[1].split("F")[0])
-        #     each_f = float(each_element_string.split("F")[1])
-        #     elements.append((each_z, each_a, each_f))
-        # molarmass = sum([each[1] * each[2] for each in elements])
-        # massdensity = molarmassdensity * 1000 * 1000 # g/m3
-
-        # self.material = _g4.MaterialCompound("material_" + self.bin_name, massdensity, len(elements), self.reg)
-        # for i in range(len(elements)):
-        #     each_z, each_a, each_f = elements[i]
-        #     each_symble = "NONE"
-        #     each_name = "NONE"
-        #     for el in periodictable.elements:
-        #         if el.number == int(each_z):
-        #             each_symble = el.symbol
-        #             each_name = el.name
-        #             break
-        #     element = _g4.ElementSimple(each_name, each_symble, int(each_z), each_a)
-        #     self.material.add_element_massfraction(element, each_f*each_a/molarmass)
-
-
-
-
-        # ne = _g4.ElementSimple("nitrogen","N",7,14.01)
-        # oe = _g4.ElementSimple("oxygen","O",8,16.0)
-        # wm.add_element_massfraction(ne,0.7)
-        # wm.add_element_massfraction(oe,0.3)
-
-        # print(ZAFstring)
-        # # exit(1)
-        # if isinstance(material, str):
-        #     self.material = _g4.MaterialPredefined(material)
-        # else:
-        #     self.material = material
+        self.material = self.material_creator.create_material(ZAFstring, material[4] * material[2] * 1000) # convert from /mm3 to /cm3
     
     def set_PhiRange(self, phimin, phimax):
         self.phimin = phimin
@@ -107,19 +66,25 @@ class SingleBin:
             return
         if self.rmin < 0.0001:
             self.rmin = 0.0001
-        self.solid = pyg4ometry.geant4.solid.Tubs(f"{self.bin_name}_Solid_Tubs", self.rmin, self.rmax, self.dz, self.phimin, self.dphi - 0.001, self.reg)
+        self.solid = self.solid_creator.create_tub(self.rmin+ 0.00001, self.rmax- 0.00001, self.dz- 0.00001, self.dphi- 0.00001)
+        self.translation[2] += (self.zmax + self.zmin)/2
+        self.set_rotation(0, 0, self.phimin)
+        # self.set_translation(0, 0, (self.zmin + self.zmax)/2)
+        # self.set_translation(0, 0, 0)
+        # self.solid = pyg4ometry.geant4.solid.Tubs(f"{self.bin_name}_Solid_Tubs", self.rmin, self.rmax, self.dz, self.phimin, self.dphi - 0.001, self.reg)
         self.logical = pyg4ometry.geant4.LogicalVolume(self.solid, self.material, f"{self.bin_name}_Logical", self.reg)
-        self.physical = pyg4ometry.geant4.PhysicalVolume(self.rotation, self.translation,self.logical, f"{self.bin_name}_Physical", self.world, self.reg)
+        self.physical = pyg4ometry.geant4.PhysicalVolume(self.rotation, self.translation, self.logical, f"{self.bin_name}_Physical", self.world, self.reg)
 
 
 
 class DetectorBinCollection:
-    def __init__(self, name, reg, world, jsonmapping, material_creator):
+    def __init__(self, name, reg, world, jsonmapping, material_creator, solid_creator):
         self.name = name
         self.reg = reg
         self.world = world
         self.jsonmapping = jsonmapping
         self.material_creator = material_creator
+        self.solid_creator = solid_creator
         self.bins = []
         self.get_meta_physical()
         self.get_meta_binning()
@@ -162,11 +127,11 @@ class DetectorBinCollection:
 
 
     def process_singlebin(self, name, binR, binPhi, binZ, material, each_material_discription_ZAF=None):
-        singlebin = SingleBin(f"{self.name}_{name}", self.reg, self.world, self.material_creator)
+        singlebin = SingleBin(f"{self.name}_{name}", self.reg, self.world, self.material_creator, self.solid_creator)
         singlebin.set_Rrange(binR[0], binR[1])
         singlebin.set_ZRange(binZ[0], binZ[1])
         singlebin.set_PhiRange(binPhi[0], binPhi[1])
-        singlebin.set_materialZAF(material, each_material_discription_ZAF) # TODO: Change this to actual material
+        singlebin.set_materialZAF(material, each_material_discription_ZAF)
         singlebin.set_translation(self.translation[0], self.translation[1], self.translation[2])
         singlebin.set_rotation(self.rotation[0], self.rotation[1], self.rotation[2])
         singlebin.create_volume()
@@ -211,13 +176,52 @@ class Detector:
         self.name = name
         self.jsonmapping = jsonmapping
         self.reg  = pyg4ometry.geant4.Registry()
-        self.world_solid   = pyg4ometry.geant4.solid.Box("worldsolid", 10000, 10000, 10000, self.reg)
-        self.world_logical   = pyg4ometry.geant4.LogicalVolume(self.world_solid,"G4_Galactic","worldlogical", self.reg)
+        self.world_solid   = pyg4ometry.geant4.solid.Box("worldsolid", 50000, 50000, 100000, self.reg)
+        self.create_air()
+        self.world_logical   = pyg4ometry.geant4.LogicalVolume(self.world_solid, self.air, "worldlogical", self.reg)
         self.reg.setWorld(self.world_logical.name)
         self.material_creator = MaterialCreator(self.reg)
+        self.solid_creator = SolidCreator(self.reg, tolerance=0)
 
         self.generate_layers()
     
+    def create_air(self):
+        self.c12 = _g4.Isotope("C12", 6, 12, 12)
+        self.c13 = _g4.Isotope("C13", 6, 13, 13.0034)
+        self.carbon = _g4.ElementIsotopeMixture("worldcarbon", "C", 2)
+        self.carbon.add_isotope(self.c12, 0.9893)
+        self.carbon.add_isotope(self.c13, 0.0107)
+
+        self.n14 = _g4.Isotope("N14", 7, 14, 14.0031)
+        self.n15 = _g4.Isotope("N15", 7, 15, 15.0001)
+        self.nitrogen = _g4.ElementIsotopeMixture("worldnitrogen", "N", 2)
+        self.nitrogen.add_isotope(self.n14, 0.99632)
+        self.nitrogen.add_isotope(self.n15, 0.00368)
+
+        self.o16 = _g4.Isotope("O16", 8, 16, 15.9949)
+        self.o17 = _g4.Isotope("O17", 8, 17, 16.9991)
+        self.o18 = _g4.Isotope("O18", 8, 18, 17.9992)
+        self.oxygen = _g4.ElementIsotopeMixture("worldoxygen", "O", 3)
+        self.oxygen.add_isotope(self.o16, 0.99757)
+        self.oxygen.add_isotope(self.o17, 0.00038)
+        self.oxygen.add_isotope(self.o18, 0.00205)
+
+        self.ar36 = _g4.Isotope("Ar36", 18, 36, 35.9675)
+        self.ar38 = _g4.Isotope("Ar38", 18, 38, 37.9627)
+        self.ar40 = _g4.Isotope("Ar40", 18, 40, 39.9624)
+        self.argon = _g4.ElementIsotopeMixture("worldargon", "Ar", 3)
+        self.argon.add_isotope(self.ar36, 0.003365)
+        self.argon.add_isotope(self.ar38, 0.000632)
+        self.argon.add_isotope(self.ar40, 0.996003)
+
+        self.air = _g4.MaterialCompound("worldair", 0.00120479, 4, self.reg)
+        self.air.add_element_massfraction(self.carbon, 0.000124000124000124)
+        self.air.add_element_massfraction(self.nitrogen, 0.755267755267755)
+        self.air.add_element_massfraction(self.oxygen, 0.231781231781232)
+        self.air.add_element_massfraction(self.argon, 0.0128270128270128)
+
+        self.air.set_temperature(293.15)
+
     def check_layer(self, layer):
         json_bins = layer["value"]["material"]["data"] 
         for each_bin in list(itertools.chain(*json_bins)):
@@ -234,14 +238,19 @@ class Detector:
             name = f"dic_{i}_"
             if "layer" in each_layer:
                 name += f"layer{each_layer['layer']}_"
-                if each_layer['layer'] != 2:
-                    continue
+                # if each_layer['layer'] != 2:
+                #     continue
             if "approach" in each_layer:
                 name += f"approach{each_layer['approach']}_"
-                print(f"Skipping approach layer {name}")
+            else:
                 continue
+
             if "boundary" in each_layer:
                 name += f"boundary{each_layer['boundary']}_"
+                continue
+
+            # if int(each_layer['boundary']) != 16:
+            #     continue
 
 
             name = name[:-1]
@@ -249,9 +258,9 @@ class Detector:
                 if name in self.layers:
                     print(f"Layer {name} already exists")
                 count += 1
-                if count == 2 or True:
+                if count > 7 or True:
                     print(f"Creating layer {name}")
-                    each_bin_collection = DetectorBinCollection(name, self.reg, self.world_logical, each_layer["value"]["material"], self.material_creator)
+                    each_bin_collection = DetectorBinCollection(name, self.reg, self.world_logical, each_layer["value"]["material"], self.material_creator, self.solid_creator)
                     self.layers[name] = each_bin_collection
                 # each_bin_collection = DetectorBinCollection(name, self.reg, self.world_logical, each_layer["value"]["material"])
                 # self.layers[name] = each_bin_collection
@@ -275,14 +284,24 @@ class Detector:
         v.addAxes(20)
         v.view()
 
+
 def main():
     # Load the JSON file
     with open("material-map.json") as f:
         atlas_geometry = json.load(f)
     atlas_geometry = atlas_geometry["Surfaces"]["entries"]
     atlas_detector = Detector("ATLAS", atlas_geometry)
+    atlas_detector.save(f"ATLAS.gdml")
+    return
 
-    atlas_detector.save("ATLAS.gdml")
+    for i in range(20):
+        global inumber
+        inumber = i + 1
+        
+        atlas_detector = Detector("ATLAS", atlas_geometry)
+
+        atlas_detector.save(f"ATLAS_{inumber}.gdml")
+        break
     # atlas_detector.visualize()
 
 

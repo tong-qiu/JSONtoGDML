@@ -9,7 +9,7 @@ class MaterialCreator:
         self.reg = reg
         self.useapproximate = True
 
-    def create_material(self, ZAFstring, molarmassdensity):
+    def create_material(self, ZAFstring, massdensity):
         elements_string = ZAFstring.split(";")
         elements = []
         for each_element_string in elements_string:
@@ -18,11 +18,11 @@ class MaterialCreator:
             each_element_string = each_element_string.replace("Z", "")
             each_z = float(each_element_string.split("A")[0])
             each_a = float(each_element_string.split("A")[1].split("F")[0])
-            each_f = float(each_element_string.split("F")[1])
+            each_f = float(each_element_string.split("F")[1]) # molar fraction
             elements.append((each_z, each_a, each_f))
         elements.sort(key=lambda x: x[0])
         molarmass = sum([each[1] * each[2] for each in elements])
-        massdensity = molarmassdensity * 1000 * 1000 # g/m3
+        massdensity = massdensity # g/cm3
 
         materialkey = ""
         for each in elements:
