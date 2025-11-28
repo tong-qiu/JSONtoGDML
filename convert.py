@@ -78,20 +78,21 @@ class SingleBin:
 
 
 class DetectorBinCollection:
-    def __init__(self, name, reg, world, jsonmapping, material_creator, solid_creator):
+    def __init__(self, name, reg, world, materialmap, material_creator, solid_creator, r):
         self.name = name
         self.reg = reg
         self.world = world
-        self.jsonmapping = jsonmapping
+        self.materialmap = materialmap
         self.material_creator = material_creator
         self.solid_creator = solid_creator
+        self.r = r
         self.bins = []
         self.get_meta_physical()
         self.get_meta_binning()
         self.generate_allbins()
     
     def get_meta_physical(self):
-        meta_map = self.jsonmapping["binUtility"]
+        meta_map = self.materialmap["binUtility"]
         self.translation = None
         self.rotation = None
         if "transform" in meta_map:
@@ -104,7 +105,7 @@ class DetectorBinCollection:
             self.rotation = [0, 0, 0]
 
     def get_meta_binning(self):
-        meta_map = self.jsonmapping["binUtility"]
+        meta_map = self.materialmap["binUtility"]
         self.binPhi = []
         self.binR = []
         self.binZ = []
@@ -139,7 +140,7 @@ class DetectorBinCollection:
 
 
     def generate_allbins(self):
-        material_map = self.jsonmapping["data"]
+        material_map = self.materialmap["data"]
         if len(material_map[0]) != len(self.binorder[0][1]):
             raise ValueError("Number of bins in binningdata and material data do not match")
         if len(material_map) != len(self.binorder[1][1]):
@@ -153,8 +154,10 @@ class DetectorBinCollection:
                 each_material_discription = each_material_map["material"]
                 each_material_discription_ZAF = each_material_map["ZAF"]
                 each_thickness = float(each_material_map["thickness"])
+                # each_thickness = 1
                 binPhi = binZ = [-each_thickness/2, each_thickness/2]
                 binR = [0, each_thickness]
+                isrepresentative = False
                 if self.binorder[0][0] == "binR":
                     binR = self.binorder[0][1][j]
                 if self.binorder[0][0] == "binPhi":
@@ -167,14 +170,18 @@ class DetectorBinCollection:
                     binPhi = self.binorder[1][1][i]
                 if self.binorder[1][0] == "binZ":
                     binZ = self.binorder[1][1][i]
-                eachbin = self.process_singlebin(binname, binR, binPhi, binZ, each_material_discription, each_material_discription_ZAF)
-                each_bins.append(eachbin)
+                if self.binorder[0][0] in ("binPhi", "binZ") and self.binorder[1][0] in ("binPhi", "binZ"):
+                    binR = [self.r - each_thickness/2, self.r + each_thickness/2]
+                if not isrepresentative:
+                    eachbin = self.process_singlebin(binname, binR, binPhi, binZ, each_material_discription, each_material_discription_ZAF)
+                    each_bins.append(eachbin)
             self.bin_collection.append(each_bins)
 
 class Detector:
-    def __init__(self, name, jsonmapping):
+    def __init__(self, name, materialmap, geometryR):
         self.name = name
-        self.jsonmapping = jsonmapping
+        self.materialmap = materialmap
+        self.geometryR = geometryR
         self.reg  = pyg4ometry.geant4.Registry()
         self.world_solid   = pyg4ometry.geant4.solid.Box("worldsolid", 50000, 50000, 100000, self.reg)
         self.create_air()
@@ -234,11 +241,17 @@ class Detector:
         self.layers = {}
         i = 0
         count = 0
-        for each_layer in self.jsonmapping:
+        for each_layer in self.materialmap:
             name = f"dic_{i}_"
+            if "volume" in each_layer:
+                name += f"volume{each_layer['volume']}_"
+            # if each_layer["volume"] != 23:
+            #     continue
+
             if "layer" in each_layer:
                 name += f"layer{each_layer['layer']}_"
-                # if each_layer['layer'] != 2:
+
+                # if each_layer['layer'] not in (2, 4):
                 #     continue
             if "approach" in each_layer:
                 name += f"approach{each_layer['approach']}_"
@@ -258,9 +271,10 @@ class Detector:
                 if name in self.layers:
                     print(f"Layer {name} already exists")
                 count += 1
-                if count > 7 or True:
+                if True:
                     print(f"Creating layer {name}")
-                    each_bin_collection = DetectorBinCollection(name, self.reg, self.world_logical, each_layer["value"]["material"], self.material_creator, self.solid_creator)
+                    r = self.geometryR.getR(int(each_layer['volume']), int(each_layer['layer']), int(each_layer['approach']))
+                    each_bin_collection = DetectorBinCollection(name, self.reg, self.world_logical, each_layer["value"]["material"], self.material_creator, self.solid_creator, r)
                     self.layers[name] = each_bin_collection
                 # each_bin_collection = DetectorBinCollection(name, self.reg, self.world_logical, each_layer["value"]["material"])
                 # self.layers[name] = each_bin_collection
@@ -284,13 +298,41 @@ class Detector:
         v.addAxes(20)
         v.view()
 
+class CylinderR:
+    def __init__(self, geometrymapfile):
+        with open(geometrymapfile) as f:
+            geometrymap = json.load(f)
+        self.Rdic = {}
+        geometrymap = geometrymap["Surfaces"]["entries"]
+
+        for each in geometrymap:
+            if "layer" not in each or "approach" not in each:
+                continue
+            if each["value"]["bounds"]["type"] != "CylinderBounds":
+                continue
+            key = self.getindex(int(each["volume"]), int(each["layer"]), int(each["approach"]))
+            if key in self.Rdic:
+                print(f"Error: CylinderR key {key} already exists in Rdic")
+                exit(1)
+            self.Rdic[key] = float(each["value"]["bounds"]["values"][0])
+    
+    def getR(self, volumeid, layerid, approachid):
+        key = self.getindex(volumeid, layerid, approachid)
+        if key not in self.Rdic:
+            return -1
+        return self.Rdic[key]
+
+    def getindex(self, volumeid, layerid, approachid):
+        return volumeid * 1000000 + layerid * 1000 + approachid
 
 def main():
     # Load the JSON file
     with open("material-map.json") as f:
         atlas_geometry = json.load(f)
+    geometry_r = CylinderR("geometry-map.json") 
+
     atlas_geometry = atlas_geometry["Surfaces"]["entries"]
-    atlas_detector = Detector("ATLAS", atlas_geometry)
+    atlas_detector = Detector("ATLAS", atlas_geometry, geometry_r)
     atlas_detector.save(f"ATLAS.gdml")
     return
 
