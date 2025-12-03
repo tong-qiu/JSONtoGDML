@@ -67,6 +67,7 @@ class SingleBin:
         if self.rmin < 0.0001:
             self.rmin = 0.0001
         self.solid = self.solid_creator.create_tub(self.rmin+ 0.00001, self.rmax- 0.00001, self.dz- 0.00001, self.dphi- 0.00001)
+        #print(self.bin_name, self.translation, self.zmax, self.zmin)
         self.translation[2] += (self.zmax + self.zmin)/2
         self.set_rotation(0, 0, self.phimin)
         # self.set_translation(0, 0, (self.zmin + self.zmax)/2)
@@ -154,7 +155,7 @@ class DetectorBinCollection:
                 each_material_discription = each_material_map["material"]
                 each_material_discription_ZAF = each_material_map["ZAF"]
                 each_thickness = float(each_material_map["thickness"])
-                # each_thickness = 1
+                each_thickness = 1
                 binPhi = binZ = [-each_thickness/2, each_thickness/2]
                 binR = [0, each_thickness]
                 isrepresentative = False
@@ -183,15 +184,39 @@ class Detector:
         self.materialmap = materialmap
         self.geometryR = geometryR
         self.reg  = pyg4ometry.geant4.Registry()
-        self.world_solid   = pyg4ometry.geant4.solid.Box("worldsolid", 50000, 50000, 100000, self.reg)
-        self.create_air()
-        self.world_logical   = pyg4ometry.geant4.LogicalVolume(self.world_solid, self.air, "worldlogical", self.reg)
-        self.reg.setWorld(self.world_logical.name)
         self.material_creator = MaterialCreator(self.reg)
         self.solid_creator = SolidCreator(self.reg, tolerance=0)
 
-        self.generate_layers()
+        self.new_logicals = []
+        self.new_physicals = []
+
+        #self.generate_layers()
     
+    def create_world(self):
+        self.world_solid = pyg4ometry.geant4.solid.Box("worldsolid", 50000, 50000, 100000, self.reg)
+        self.create_air()
+        self.world_logical = pyg4ometry.geant4.LogicalVolume(self.world_solid, self.air, "worldlogical", self.reg)
+        self.reg.setWorld(self.world_logical.name)
+
+    def use_world(self, logical):
+        self.world_solid = logical.solid
+        self.reg.transferSolid(logical.solid)
+        self.reg.transferMaterial(logical.material)
+        self.world_logical = pyg4ometry.geant4.LogicalVolume(self.world_solid, logical.material, "worldlogical", self.reg)
+        self.reg.setWorld(self.world_logical.name)
+
+    def add_volume(self, physical):
+        rotation = [physical.rotation.x.eval(), physical.rotation.y.eval(), physical.rotation.z.eval(), physical.rotation.unit]
+        position = [physical.position.x.eval(), physical.position.y.eval(), physical.position.z.eval(), physical.position.unit]
+        logical = physical.logicalVolume
+        self.reg.transferSolid(logical.solid)
+        self.reg.transferMaterial(logical.material)
+        self.reg.transferLogicalVolume(logical)
+        #self.reg.transferPhysicalVolume(physical)
+        new_physical = pyg4ometry.geant4.PhysicalVolume(rotation, position, logical, physical.name, self.reg.getWorldVolume(), self.reg)
+        # self.new_logicals.append(logical)
+        # self.new_physicals.append(new_physical)
+
     def create_air(self):
         self.c12 = _g4.Isotope("C12", 6, 12, 12)
         self.c13 = _g4.Isotope("C13", 6, 13, 13.0034)
@@ -245,7 +270,7 @@ class Detector:
             name = f"dic_{i}_"
             if "volume" in each_layer:
                 name += f"volume{each_layer['volume']}_"
-            # if each_layer["volume"] != 23:
+            # if each_layer["volume"] != 2:
             #     continue
 
             if "layer" in each_layer:
@@ -326,51 +351,34 @@ class CylinderR:
         return volumeid * 1000000 + layerid * 1000 + approachid
 
 def main():
-    # Load the JSON file
+    print("Reading ITk gdml")
+    itk = pyg4ometry.gdml.Reader("ITk.gdml")
+    reg = itk.getRegistry()
+
+    print("Loading ACTS material and geometry map")
     with open("material-map.json") as f:
         atlas_geometry = json.load(f)
     geometry_r = CylinderR("geometry-map.json") 
-
     atlas_geometry = atlas_geometry["Surfaces"]["entries"]
     atlas_detector = Detector("ATLAS", atlas_geometry, geometry_r)
+
+    print("Resue world volume from ITk gdml")
+    atlas_detector.use_world(reg.worldVolume)
+    
+    # print("Creating world volume")
+    # atlas_detector.create_world()
+
+    print("Generating detector passive layers")
+    atlas_detector.generate_layers()
+
+    print("Adding sensitive volumes from ITk gdml")
+    for each_key in reg.physicalVolumeDict:
+        physical = reg.physicalVolumeDict[each_key]
+        logical = physical.logicalVolume
+        material_name = logical.material.name
+        if "SiliconMat" in material_name:
+            atlas_detector.add_volume(physical)
     atlas_detector.save(f"ATLAS.gdml")
-    return
-
-    for i in range(20):
-        global inumber
-        inumber = i + 1
-        
-        atlas_detector = Detector("ATLAS", atlas_geometry)
-
-        atlas_detector.save(f"ATLAS_{inumber}.gdml")
-        break
-    # atlas_detector.visualize()
-
-
-    # print(atlas_geometry)
-
-    # reg  = pyg4ometry.geant4.Registry()
-    # world_solid   = pyg4ometry.geant4.solid.Box("worldsolid", 5000, 5000, 5000, reg)
-    # world_logical   = pyg4ometry.geant4.LogicalVolume(world_solid,"G4_Galactic","wroldlogical",reg)
-    # reg.setWorld(world_logical.name)
-
-    # testbin = SingleBin("testbin", reg, world_logical)
-    # testbin.set_Rrange(700, 1000)
-    # testbin.set_ZRange(-100, 100)
-    # testbin.set_PhiRange(0, 3.14159)
-    # testbin.set_materialZ(26)
-    # testbin.set_translation(0, 0, 0)
-    # testbin.set_rotation(0, 0, 0)
-    # testbin.create_volume()
-
-    # w = pyg4ometry.gdml.Writer()
-    # w.addDetector(reg)
-    # w.write('file.gdml')
-
-    # v = pyg4ometry.visualisation.VtkViewer()
-    # v.addLogicalVolume(world_logical)
-    # v.addAxes(20)
-    # v.view()
 
 if __name__ == "__main__":
     main()
