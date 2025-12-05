@@ -276,8 +276,8 @@ class Detector:
             if "layer" in each_layer:
                 name += f"layer{each_layer['layer']}_"
 
-                # if each_layer['layer'] not in (2, 4):
-                #     continue
+                if each_layer['volume'] not in (8, 9, 10, 13, 14, 15, 16, 18, 19, 20):
+                    continue
             if "approach" in each_layer:
                 name += f"approach{each_layer['approach']}_"
             else:
