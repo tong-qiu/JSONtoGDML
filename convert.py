@@ -370,15 +370,30 @@ def main():
 
     print("Generating detector passive layers")
     atlas_detector.generate_layers()
-
+    materialnames = set()
     print("Adding sensitive volumes from ITk gdml")
     for each_key in reg.physicalVolumeDict:
         physical = reg.physicalVolumeDict[each_key]
         logical = physical.logicalVolume
         material_name = logical.material.name
-        if "SiliconMat" in material_name:
-            atlas_detector.add_volume(physical)
+        if len(logical.auxiliary) > 0:
+            if logical.auxiliary[0].auxtype == "SensDet":
+                if "Pixel" in physical.name:
+                    atlas_detector.add_volume(physical)
+                    materialnames.add(material_name)
+
+        # # Silicon_Ma HGTD
+        # # SiMetal ITkStrip
+        # if "SiliconMat" in material_name:
+        #     atlas_detector.add_volume(physical)
+        # if "SiMetal" in material_name:
+        #     atlas_detector.add_volume(physical)
+        # if "Silicon_Ma" in material_name:
+        #     atlas_detector.add_volume(physical)
     atlas_detector.save(f"ATLAS.gdml")
+    print("Materials used in sensitive volumes:")
+    for each_material in materialnames:
+        print(each_material)
 
 if __name__ == "__main__":
     main()
